@@ -100,6 +100,10 @@ database:
     keepalives_count: 3
 ```
 
+## Backups
+
+Don't forget to [back up](./usage/administration/backups.md#database) your database!
+
 ## Tuning Postgres
 
 The default settings should be fine for most deployments. For larger
@@ -255,13 +259,3 @@ however extreme care must be taken to avoid database corruption.
 
 Note that the above may fail with an error about duplicate rows if corruption
 has already occurred, and such duplicate rows will need to be manually removed.
-
-### Fixing inconsistent sequences error
-
-Synapse uses Postgres sequences to generate IDs for various tables. A sequence
-and associated table can get out of sync if, for example, Synapse has been
-downgraded and then upgraded again.
-
-To fix the issue shut down Synapse (including any and all workers) and run the
-SQL command included in the error message. Once done Synapse should start
-successfully.

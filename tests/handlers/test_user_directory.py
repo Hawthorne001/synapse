@@ -796,6 +796,7 @@ class UserDirectoryTestCase(unittest.HomeserverTestCase):
         s = self.get_success(self.handler.search_users(u1, "user2", 10))
         self.assertEqual(len(s["results"]), 1)
 
+        # Kept old spam checker without `requester_id` tests for backwards compatibility.
         async def allow_all(user_profile: UserProfile) -> bool:
             # Allow all users.
             return False
@@ -809,12 +810,47 @@ class UserDirectoryTestCase(unittest.HomeserverTestCase):
         s = self.get_success(self.handler.search_users(u1, "user2", 10))
         self.assertEqual(len(s["results"]), 1)
 
+        # Kept old spam checker without `requester_id` tests for backwards compatibility.
         # Configure a spam checker that filters all users.
         async def block_all(user_profile: UserProfile) -> bool:
             # All users are spammy.
             return True
 
         spam_checker._check_username_for_spam_callbacks = [block_all]
+
+        # User1 now gets no search results for any of the other users.
+        s = self.get_success(self.handler.search_users(u1, "user2", 10))
+        self.assertEqual(len(s["results"]), 0)
+
+        async def allow_all_expects_requester_id(
+            user_profile: UserProfile, requester_id: str
+        ) -> bool:
+            self.assertEqual(requester_id, u1)
+            # Allow all users.
+            return False
+
+        # Configure a spam checker that does not filter any users.
+        spam_checker = self.hs.get_module_api_callbacks().spam_checker
+        spam_checker._check_username_for_spam_callbacks = [
+            allow_all_expects_requester_id
+        ]
+
+        # The results do not change:
+        # We get one search result when searching for user2 by user1.
+        s = self.get_success(self.handler.search_users(u1, "user2", 10))
+        self.assertEqual(len(s["results"]), 1)
+
+        # Configure a spam checker that filters all users.
+        async def block_all_expects_requester_id(
+            user_profile: UserProfile, requester_id: str
+        ) -> bool:
+            self.assertEqual(requester_id, u1)
+            # All users are spammy.
+            return True
+
+        spam_checker._check_username_for_spam_callbacks = [
+            block_all_expects_requester_id
+        ]
 
         # User1 now gets no search results for any of the other users.
         s = self.get_success(self.handler.search_users(u1, "user2", 10))
@@ -1060,6 +1096,45 @@ class UserDirectoryTestCase(unittest.HomeserverTestCase):
             self.get_success(self.user_dir_helper.get_profiles_in_user_directory()),
             {alice: ProfileInfo(display_name=None, avatar_url=MXC_DUMMY)},
         )
+
+    def test_search_punctuation(self) -> None:
+        """Test that you can search for a user that includes punctuation"""
+
+        searching_user = self.register_user("searcher", "password")
+        searching_user_tok = self.login("searcher", "password")
+
+        room_id = self.helper.create_room_as(
+            searching_user,
+            room_version=RoomVersions.V1.identifier,
+            tok=searching_user_tok,
+        )
+
+        # We want to test searching for users of the form e.g. "user-1", with
+        # various punctuation. We also test both where the prefix is numeric and
+        # alphanumeric, as e.g. postgres tokenises "user-1" as "user" and "-1".
+        i = 1
+        for char in ["-", ".", "_"]:
+            for use_numeric in [False, True]:
+                if use_numeric:
+                    prefix1 = f"{i}"
+                    prefix2 = f"{i+1}"
+                else:
+                    prefix1 = f"a{i}"
+                    prefix2 = f"a{i+1}"
+
+                local_user_1 = self.register_user(f"user{char}{prefix1}", "password")
+                local_user_2 = self.register_user(f"user{char}{prefix2}", "password")
+
+                self._add_user_to_room(room_id, RoomVersions.V1, local_user_1)
+                self._add_user_to_room(room_id, RoomVersions.V1, local_user_2)
+
+                results = self.get_success(
+                    self.handler.search_users(searching_user, local_user_1, 20)
+                )["results"]
+                received_user_id_ordering = [result["user_id"] for result in results]
+                self.assertSequenceEqual(received_user_id_ordering[:1], [local_user_1])
+
+                i += 2
 
 
 class TestUserDirSearchDisabled(unittest.HomeserverTestCase):

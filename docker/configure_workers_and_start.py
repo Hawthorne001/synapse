@@ -117,7 +117,7 @@ WORKERS_CONFIG: Dict[str, Dict[str, Any]] = {
     },
     "media_repository": {
         "app": "synapse.app.generic_worker",
-        "listener_resources": ["media"],
+        "listener_resources": ["media", "client"],
         "endpoint_patterns": [
             "^/_matrix/media/",
             "^/_synapse/admin/v1/purge_media_cache$",
@@ -125,6 +125,8 @@ WORKERS_CONFIG: Dict[str, Dict[str, Any]] = {
             "^/_synapse/admin/v1/user/.*/media.*$",
             "^/_synapse/admin/v1/media/.*$",
             "^/_synapse/admin/v1/quarantine_media/.*$",
+            "^/_matrix/client/v1/media/.*$",
+            "^/_matrix/federation/v1/media/.*$",
         ],
         # The first configured media worker will run the media background jobs
         "shared_extra_conf": {
@@ -1096,6 +1098,13 @@ def main(args: List[str], environ: MutableMapping[str, str]) -> None:
         environ["LD_PRELOAD"] = jemallocpath
     else:
         log("Could not find %s, will not use" % (jemallocpath,))
+
+    # Empty strings are falsy in Python so this default is fine. We just can't have these
+    # be undefined because supervisord will complain about our
+    # `%(ENV_SYNAPSE_HTTP_PROXY)s` usage.
+    environ.setdefault("SYNAPSE_HTTP_PROXY", "")
+    environ.setdefault("SYNAPSE_HTTPS_PROXY", "")
+    environ.setdefault("SYNAPSE_NO_PROXY", "")
 
     # Start supervisord, which will start Synapse, all of the configured worker
     # processes, redis, nginx etc. according to the config we created above.

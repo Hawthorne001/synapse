@@ -59,11 +59,7 @@ from synapse.storage.database import (
 )
 from synapse.storage.databases.main.cache import CacheInvalidationWorkerStore
 from synapse.storage.types import Cursor
-from synapse.storage.util.id_generators import (
-    AbstractStreamIdGenerator,
-    IdGenerator,
-    MultiWriterIdGenerator,
-)
+from synapse.storage.util.id_generators import IdGenerator, MultiWriterIdGenerator
 from synapse.types import JsonDict, RetentionPolicy, StrCollection, ThirdPartyInstanceID
 from synapse.util import json_encoder
 from synapse.util.caches.descriptors import cached, cachedList
@@ -151,7 +147,7 @@ class RoomWorkerStore(CacheInvalidationWorkerStore):
 
         self.config: HomeServerConfig = hs.config
 
-        self._un_partial_stated_rooms_stream_id_gen: AbstractStreamIdGenerator
+        self._un_partial_stated_rooms_stream_id_gen: MultiWriterIdGenerator
 
         self._un_partial_stated_rooms_stream_id_gen = MultiWriterIdGenerator(
             db_conn=db_conn,
@@ -606,6 +602,8 @@ class RoomWorkerStore(CacheInvalidationWorkerStore):
         order_by: str,
         reverse_order: bool,
         search_term: Optional[str],
+        public_rooms: Optional[bool],
+        empty_rooms: Optional[bool],
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Function to retrieve a paginated list of rooms as json.
 
@@ -617,30 +615,49 @@ class RoomWorkerStore(CacheInvalidationWorkerStore):
             search_term: a string to filter room names,
                 canonical alias and room ids by.
                 Room ID must match exactly. Canonical alias must match a substring of the local part.
+            public_rooms: Optional flag to filter public and non-public rooms. If true, public rooms are queried.
+                    if false, public rooms are excluded from the query. When it is
+                    none (the default), both public rooms and none-public-rooms are queried.
+            empty_rooms: Optional flag to filter empty and non-empty rooms.
+                    A room is empty if joined_members is zero.
+                    If true, empty rooms are queried.
+                    if false, empty rooms are excluded from the query. When it is
+                    none (the default), both empty rooms and none-empty rooms are queried.
         Returns:
             A list of room dicts and an integer representing the total number of
             rooms that exist given this query
         """
         # Filter room names by a string
-        where_statement = ""
-        search_pattern: List[object] = []
+        filter_ = []
+        where_args = []
         if search_term:
-            where_statement = """
-                WHERE LOWER(state.name) LIKE ?
-                OR LOWER(state.canonical_alias) LIKE ?
-                OR state.room_id = ?
-            """
+            filter_ = [
+                "LOWER(state.name) LIKE ? OR "
+                "LOWER(state.canonical_alias) LIKE ? OR "
+                "state.room_id = ?"
+            ]
 
             # Our postgres db driver converts ? -> %s in SQL strings as that's the
             # placeholder for postgres.
             # HOWEVER, if you put a % into your SQL then everything goes wibbly.
             # To get around this, we're going to surround search_term with %'s
             # before giving it to the database in python instead
-            search_pattern = [
-                "%" + search_term.lower() + "%",
-                "#%" + search_term.lower() + "%:%",
+            where_args = [
+                f"%{search_term.lower()}%",
+                f"#%{search_term.lower()}%:%",
                 search_term,
             ]
+        if public_rooms is not None:
+            filter_arg = "1" if public_rooms else "0"
+            filter_.append(f"rooms.is_public = '{filter_arg}'")
+
+        if empty_rooms is not None:
+            if empty_rooms:
+                filter_.append("curr.joined_members = 0")
+            else:
+                filter_.append("curr.joined_members <> 0")
+
+        where_clause = "WHERE " + " AND ".join(filter_) if len(filter_) > 0 else ""
 
         # Set ordering
         if RoomSortOrder(order_by) == RoomSortOrder.SIZE:
@@ -717,7 +734,7 @@ class RoomWorkerStore(CacheInvalidationWorkerStore):
             LIMIT ?
             OFFSET ?
         """.format(
-            where=where_statement,
+            where=where_clause,
             order_by=order_by_column,
             direction="ASC" if order_by_asc else "DESC",
         )
@@ -726,10 +743,12 @@ class RoomWorkerStore(CacheInvalidationWorkerStore):
         count_sql = """
             SELECT count(*) FROM (
               SELECT room_id FROM room_stats_state state
+              INNER JOIN room_stats_current curr USING (room_id)
+              INNER JOIN rooms USING (room_id)
               {where}
             ) AS get_room_ids
         """.format(
-            where=where_statement,
+            where=where_clause,
         )
 
         def _get_rooms_paginate_txn(
@@ -737,7 +756,7 @@ class RoomWorkerStore(CacheInvalidationWorkerStore):
         ) -> Tuple[List[Dict[str, Any]], int]:
             # Add the search term into the WHERE clause
             # and execute the data query
-            txn.execute(info_sql, search_pattern + [limit, start])
+            txn.execute(info_sql, where_args + [limit, start])
 
             # Refactor room query data into a structured dictionary
             rooms = []
@@ -767,7 +786,7 @@ class RoomWorkerStore(CacheInvalidationWorkerStore):
             # Execute the count query
 
             # Add the search term into the WHERE clause if present
-            txn.execute(count_sql, search_pattern)
+            txn.execute(count_sql, where_args)
 
             room_count = cast(Tuple[int], txn.fetchone())
             return rooms, room_count[0]
@@ -1156,11 +1175,55 @@ class RoomWorkerStore(CacheInvalidationWorkerStore):
                 SET quarantined_by = ?
                 WHERE media_origin = ? AND media_id = ?
             """,
-            ((quarantined_by, origin, media_id) for origin, media_id in remote_mxcs),
+            [(quarantined_by, origin, media_id) for origin, media_id in remote_mxcs],
         )
         total_media_quarantined += txn.rowcount if txn.rowcount > 0 else 0
 
         return total_media_quarantined
+
+    async def block_room(self, room_id: str, user_id: str) -> None:
+        """Marks the room as blocked.
+
+        Can be called multiple times (though we'll only track the last user to
+        block this room).
+
+        Can be called on a room unknown to this homeserver.
+
+        Args:
+            room_id: Room to block
+            user_id: Who blocked it
+        """
+        await self.db_pool.simple_upsert(
+            table="blocked_rooms",
+            keyvalues={"room_id": room_id},
+            values={},
+            insertion_values={"user_id": user_id},
+            desc="block_room",
+        )
+        await self.db_pool.runInteraction(
+            "block_room_invalidation",
+            self._invalidate_cache_and_stream,
+            self.is_room_blocked,
+            (room_id,),
+        )
+
+    async def unblock_room(self, room_id: str) -> None:
+        """Remove the room from blocking list.
+
+        Args:
+            room_id: Room to unblock
+        """
+        await self.db_pool.simple_delete(
+            table="blocked_rooms",
+            keyvalues={"room_id": room_id},
+            desc="unblock_room",
+        )
+        await self.db_pool.runInteraction(
+            "block_room_invalidation",
+            self._invalidate_cache_and_stream,
+            self.is_room_blocked,
+            (room_id,),
+        )
 
     async def get_rooms_for_retention_period_in_range(
         self, min_ms: Optional[int], max_ms: Optional[int], include_null: bool = False
@@ -1363,6 +1426,30 @@ class RoomWorkerStore(CacheInvalidationWorkerStore):
         partial_state_rooms = {row[0] for row in rows}
         return {room_id: room_id in partial_state_rooms for room_id in room_ids}
 
+    @cached(max_entries=10000, iterable=True)
+    async def get_partial_rooms(self) -> AbstractSet[str]:
+        """Get any "partial-state" rooms which the user is in.
+
+        This is fast as the set of partially stated rooms at any point across
+        the whole server is small, and so such a query is fast. This is also
+        faster than looking up whether a set of room ID's are partially stated
+        via `is_partial_state_room_batched(...)` because of the sheer amount of
+        CPU time looking all the rooms up in the cache.
+        """
+
+        def _get_partial_rooms_for_user_txn(
+            txn: LoggingTransaction,
+        ) -> AbstractSet[str]:
+            sql = """
+                SELECT room_id FROM partial_state_rooms
+            """
+            txn.execute(sql)
+            return {room_id for (room_id,) in txn}
+
+        return await self.db_pool.runInteraction(
+            "get_partial_rooms_for_user", _get_partial_rooms_for_user_txn
+        )
+
     async def get_join_event_id_and_device_lists_stream_id_for_partial_state(
         self, room_id: str
     ) -> Tuple[str, int]:
@@ -1385,6 +1472,9 @@ class RoomWorkerStore(CacheInvalidationWorkerStore):
         return self._un_partial_stated_rooms_stream_id_gen.get_current_token_for_writer(
             instance_name
         )
+
+    def get_un_partial_stated_rooms_id_generator(self) -> MultiWriterIdGenerator:
+        return self._un_partial_stated_rooms_stream_id_gen
 
     async def get_un_partial_stated_rooms_between(
         self, last_id: int, current_id: int, room_ids: Collection[str]
@@ -1540,6 +1630,7 @@ class RoomWorkerStore(CacheInvalidationWorkerStore):
         direction: Direction = Direction.BACKWARDS,
         user_id: Optional[str] = None,
         room_id: Optional[str] = None,
+        event_sender_user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Retrieve a paginated list of event reports
 
@@ -1550,6 +1641,8 @@ class RoomWorkerStore(CacheInvalidationWorkerStore):
                 oldest first (forwards)
             user_id: search for user_id. Ignored if user_id is None
             room_id: search for room_id. Ignored if room_id is None
+                event_sender_user_id: search for the sender of the reported event. Ignored if
+                event_sender_user_id is None
         Returns:
             Tuple of:
                 json list of event reports
@@ -1569,6 +1662,10 @@ class RoomWorkerStore(CacheInvalidationWorkerStore):
                 filters.append("er.room_id LIKE ?")
                 args.extend(["%" + room_id + "%"])
 
+            if event_sender_user_id:
+                filters.append("events.sender = ?")
+                args.extend([event_sender_user_id])
+
             if direction == Direction.BACKWARDS:
                 order = "DESC"
             else:
@@ -1584,11 +1681,10 @@ class RoomWorkerStore(CacheInvalidationWorkerStore):
             sql = """
                 SELECT COUNT(*) as total_event_reports
                 FROM event_reports AS er
+                LEFT JOIN events USING(event_id)
                 JOIN room_stats_state ON room_stats_state.room_id = er.room_id
                 {}
-                """.format(
-                where_clause
-            )
+                """.format(where_clause)
             txn.execute(sql, args)
             count = cast(Tuple[int], txn.fetchone())[0]
 
@@ -1604,8 +1700,7 @@ class RoomWorkerStore(CacheInvalidationWorkerStore):
                     room_stats_state.canonical_alias,
                     room_stats_state.name
                 FROM event_reports AS er
-                LEFT JOIN events
-                    ON events.event_id = er.event_id
+                LEFT JOIN events USING(event_id)
                 JOIN room_stats_state
                     ON room_stats_state.room_id = er.room_id
                 {where_clause}
@@ -2207,6 +2302,7 @@ class RoomStore(RoomBackgroundUpdateStore, RoomWorkerStore):
         super().__init__(database, db_conn, hs)
 
         self._event_reports_id_gen = IdGenerator(db_conn, "event_reports", "id")
+        self._room_reports_id_gen = IdGenerator(db_conn, "room_reports", "id")
 
         self._instance_name = hs.get_instance_name()
 
@@ -2320,6 +2416,7 @@ class RoomStore(RoomBackgroundUpdateStore, RoomWorkerStore):
         self._invalidate_cache_and_stream(
             txn, self._get_partial_state_servers_at_join, (room_id,)
         )
+        self._invalidate_all_cache_and_stream(txn, self.get_partial_rooms)
 
     async def write_partial_state_rooms_join_event_id(
         self,
@@ -2416,49 +2513,36 @@ class RoomStore(RoomBackgroundUpdateStore, RoomWorkerStore):
         )
         return next_id
 
-    async def block_room(self, room_id: str, user_id: str) -> None:
-        """Marks the room as blocked.
-
-        Can be called multiple times (though we'll only track the last user to
-        block this room).
-
-        Can be called on a room unknown to this homeserver.
-
-        Args:
-            room_id: Room to block
-            user_id: Who blocked it
-        """
-        await self.db_pool.simple_upsert(
-            table="blocked_rooms",
-            keyvalues={"room_id": room_id},
-            values={},
-            insertion_values={"user_id": user_id},
-            desc="block_room",
-        )
-        await self.db_pool.runInteraction(
-            "block_room_invalidation",
-            self._invalidate_cache_and_stream,
-            self.is_room_blocked,
-            (room_id,),
-        )
-
-    async def unblock_room(self, room_id: str) -> None:
-        """Remove the room from blocking list.
+    async def add_room_report(
+        self,
+        room_id: str,
+        user_id: str,
+        reason: str,
+        received_ts: int,
+    ) -> int:
+        """Add a room report
 
         Args:
-            room_id: Room to unblock
+            room_id: The room ID being reported.
+            user_id: User who reports the room.
+            reason: Description that the user specifies.
+            received_ts: Time when the user submitted the report (milliseconds).
+        Returns:
+            Id of the room report.
         """
-        await self.db_pool.simple_delete(
-            table="blocked_rooms",
-            keyvalues={"room_id": room_id},
-            desc="unblock_room",
+        next_id = self._room_reports_id_gen.get_next()
+        await self.db_pool.simple_insert(
+            table="room_reports",
+            values={
+                "id": next_id,
+                "received_ts": received_ts,
+                "room_id": room_id,
+                "user_id": user_id,
+                "reason": reason,
+            },
+            desc="add_room_report",
         )
-        await self.db_pool.runInteraction(
-            "block_room_invalidation",
-            self._invalidate_cache_and_stream,
-            self.is_room_blocked,
-            (room_id,),
-        )
+        return next_id
 
     async def clear_partial_state_room(self, room_id: str) -> Optional[int]:
         """Clears the partial state flag for a room.
@@ -2473,7 +2557,9 @@ class RoomStore(RoomBackgroundUpdateStore, RoomWorkerStore):
             still contains events with partial state.
         """
         try:
-            async with self._un_partial_stated_rooms_stream_id_gen.get_next() as un_partial_state_room_stream_id:
+            async with (
+                self._un_partial_stated_rooms_stream_id_gen.get_next() as un_partial_state_room_stream_id
+            ):
                 await self.db_pool.runInteraction(
                     "clear_partial_state_room",
                     self._clear_partial_state_room_txn,
@@ -2510,6 +2596,7 @@ class RoomStore(RoomBackgroundUpdateStore, RoomWorkerStore):
         self._invalidate_cache_and_stream(
             txn, self._get_partial_state_servers_at_join, (room_id,)
         )
+        self._invalidate_all_cache_and_stream(txn, self.get_partial_rooms)
 
         DatabasePool.simple_insert_txn(
             txn,
