@@ -31,6 +31,7 @@ from typing import (
     AnyStr,
     Dict,
     Iterable,
+    Literal,
     Mapping,
     MutableMapping,
     Optional,
@@ -40,12 +41,11 @@ from typing import (
 from urllib.parse import urlencode
 
 import attr
-from typing_extensions import Literal
 
 from twisted.test.proto_helpers import MemoryReactorClock
 from twisted.web.server import Site
 
-from synapse.api.constants import Membership
+from synapse.api.constants import Membership, ReceiptTypes
 from synapse.api.errors import Codes
 from synapse.server import HomeServer
 from synapse.types import JsonDict
@@ -261,9 +261,9 @@ class RestHelper:
         targ: str,
         expect_code: int = HTTPStatus.OK,
         tok: Optional[str] = None,
-    ) -> None:
+    ) -> JsonDict:
         """A convenience helper: `change_membership` with `membership` preset to "ban"."""
-        self.change_membership(
+        return self.change_membership(
             room=room,
             src=src,
             targ=targ,
@@ -330,19 +330,24 @@ class RestHelper:
             data,
         )
 
-        assert channel.code == expect_code, "Expected: %d, got: %d, resp: %r" % (
-            expect_code,
-            channel.code,
-            channel.result["body"],
+        assert channel.code == expect_code, (
+            "Expected: %d, got: %d, PUT %s -> resp: %r"
+            % (
+                expect_code,
+                channel.code,
+                path,
+                channel.result["body"],
+            )
         )
 
         if expect_errcode:
-            assert (
-                str(channel.json_body["errcode"]) == expect_errcode
-            ), "Expected: %r, got: %r, resp: %r" % (
-                expect_errcode,
-                channel.json_body["errcode"],
-                channel.result["body"],
+            assert str(channel.json_body["errcode"]) == expect_errcode, (
+                "Expected: %r, got: %r, resp: %r"
+                % (
+                    expect_errcode,
+                    channel.json_body["errcode"],
+                    channel.result["body"],
+                )
             )
 
         if expect_additional_fields is not None:
@@ -351,13 +356,14 @@ class RestHelper:
                     expect_key,
                     channel.json_body,
                 )
-                assert (
-                    channel.json_body[expect_key] == expect_value
-                ), "Expected: %s at %s, got: %s, resp: %s" % (
-                    expect_value,
-                    expect_key,
-                    channel.json_body[expect_key],
-                    channel.json_body,
+                assert channel.json_body[expect_key] == expect_value, (
+                    "Expected: %s at %s, got: %s, resp: %s"
+                    % (
+                        expect_value,
+                        expect_key,
+                        channel.json_body[expect_key],
+                        channel.json_body,
+                    )
                 )
 
         self.auth_user_id = temp_id
@@ -542,7 +548,7 @@ class RestHelper:
         room_id: str,
         event_type: str,
         body: Dict[str, Any],
-        tok: Optional[str],
+        tok: Optional[str] = None,
         expect_code: int = HTTPStatus.OK,
         state_key: str = "",
     ) -> JsonDict:
@@ -883,7 +889,7 @@ class RestHelper:
             "GET",
             uri,
         )
-        assert channel.code == 302
+        assert channel.code == 302, f"Expected 302 for {uri}, got {channel.code}"
 
         # hit the redirect url again with the right Host header, which should now issue
         # a cookie and redirect to the SSO provider.
@@ -895,17 +901,18 @@ class RestHelper:
 
         location = get_location(channel)
         parts = urllib.parse.urlsplit(location)
+        next_uri = urllib.parse.urlunsplit(("", "") + parts[2:])
         channel = make_request(
             self.reactor,
             self.site,
             "GET",
-            urllib.parse.urlunsplit(("", "") + parts[2:]),
+            next_uri,
             custom_headers=[
                 ("Host", parts[1]),
             ],
         )
 
-        assert channel.code == 302
+        assert channel.code == 302, f"Expected 302 for {next_uri}, got {channel.code}"
         channel.extract_cookies(cookies)
         return get_location(channel)
 
@@ -941,3 +948,15 @@ class RestHelper:
         assert len(p.links) == 1, "not exactly one link in confirmation page"
         oauth_uri = p.links[0]
         return oauth_uri
+
+    def send_read_receipt(self, room_id: str, event_id: str, *, tok: str) -> None:
+        """Send a read receipt into the room at the given event"""
+        channel = make_request(
+            self.reactor,
+            self.site,
+            method="POST",
+            path=f"/rooms/{room_id}/receipt/{ReceiptTypes.READ}/{event_id}",
+            content={},
+            access_token=tok,
+        )
+        assert channel.code == HTTPStatus.OK, channel.text_body

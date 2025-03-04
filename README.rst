@@ -1,21 +1,35 @@
-=========================================================================
-Synapse |support| |development| |documentation| |license| |pypi| |python|
-=========================================================================
+.. image:: ./docs/element_logo_white_bg.svg
+   :height: 60px
 
-Synapse is an open-source `Matrix <https://matrix.org/>`_ homeserver written and
-maintained by the Matrix.org Foundation. We began rapid development in 2014,
-reaching v1.0.0 in 2019. Development on Synapse and the Matrix protocol itself continues
-in earnest today.
+**Element Synapse - Matrix homeserver implementation**
 
-Briefly, Matrix is an open standard for communications on the internet, supporting
-federation, encryption and VoIP. Matrix.org has more to say about the `goals of the
-Matrix project <https://matrix.org/docs/guides/introduction>`_, and the `formal specification
-<https://spec.matrix.org/>`_ describes the technical details.
+|support| |development| |documentation| |license| |pypi| |python|
+
+Synapse is an open source `Matrix <https://matrix.org>`__ homeserver
+implementation, written and maintained by `Element <https://element.io>`_.
+`Matrix <https://github.com/matrix-org>`__ is the open standard for
+secure and interoperable real time communications. You can directly run
+and manage the source code in this repository, available under an AGPL
+license (or alternatively under a commercial license from Element).
+There is no support provided by Element unless you have a
+subscription from Element.
+
+Subscription
+============
+
+For those that need an enterprise-ready solution, Element
+Server Suite (ESS) is `available via subscription <https://element.io/pricing>`_.
+ESS builds on Synapse to offer a complete Matrix-based backend including the full
+`Admin Console product <https://element.io/enterprise-functionality/admin-console>`_,
+giving admins the power to easily manage an organization-wide
+deployment. It includes advanced identity management, auditing,
+moderation and data retention options as well as Long Term Support and
+SLAs. ESS can be used to support any Matrix-based frontend client.
 
 .. contents::
 
-Installing and configuration
-============================
+🛠️ Installing and configuration
+===============================
 
 The Synapse documentation describes `how to install Synapse <https://element-hq.github.io/synapse/latest/setup/installation.html>`_. We recommend using
 `Docker images <https://element-hq.github.io/synapse/latest/setup/installation.html#docker-images-and-ansible-playbooks>`_ or `Debian packages from Matrix.org
@@ -105,8 +119,8 @@ Following this advice ensures that even if an XSS is found in Synapse, the
 impact to other applications will be minimal.
 
 
-Testing a new installation
-==========================
+🧪 Testing a new installation
+=============================
 
 The easiest way to try out your new Synapse installation is by connecting to it
 from a web client.
@@ -145,7 +159,7 @@ it:
 
 We **strongly** recommend using a CAPTCHA, particularly if your homeserver is exposed to
 the public internet. Without it, anyone can freely register accounts on your homeserver.
-This can be exploited by attackers to create spambots targetting the rest of the Matrix
+This can be exploited by attackers to create spambots targeting the rest of the Matrix
 federation.
 
 Your new user name will be formed partly from the ``server_name``, and partly
@@ -159,8 +173,20 @@ the form of::
 As when logging in, you will need to specify a "Custom server".  Specify your
 desired ``localpart`` in the 'User name' box.
 
-Troubleshooting and support
-===========================
+🎯 Troubleshooting and support
+==============================
+
+🚀 Professional support
+-----------------------
+
+Enterprise quality support for Synapse including SLAs is available as part of an
+`Element Server Suite (ESS) <https://element.io/pricing>`_ subscription.
+
+If you are an existing ESS subscriber then you can raise a `support request <https://ems.element.io/support>`_
+and access the `knowledge base <https://ems-docs.element.io>`_.
+
+🤝 Community support
+--------------------
 
 The `Admin FAQ <https://element-hq.github.io/synapse/latest/usage/administration/admin_faq.html>`_
 includes tips on dealing with some common problems. For more details, see
@@ -176,8 +202,8 @@ issues for support requests, only for bug reports and feature requests.
 .. |docs| replace:: ``docs``
 .. _docs: docs
 
-Identity Servers
-================
+🪪 Identity Servers
+===================
 
 Identity servers have the job of mapping email addresses and other 3rd Party
 IDs (3PIDs) to Matrix user IDs, as well as verifying the ownership of 3PIDs
@@ -206,8 +232,8 @@ an email address with your account, or send an invite to another user via their
 email address.
 
 
-Development
-===========
+🛠️ Development
+==============
 
 We welcome contributions to Synapse from the community!
 The best place to get started is our
@@ -224,9 +250,23 @@ Developers might be particularly interested in:
 Alongside all that, join our developer community on Matrix:
 `#synapse-dev:matrix.org <https://matrix.to/#/#synapse-dev:matrix.org>`_, featuring real humans!
 
+Copyright and Licensing
+=======================
 
-.. |support| image:: https://img.shields.io/matrix/synapse:matrix.org?label=support&logo=matrix
-  :alt: (get support on #synapse:matrix.org)
+Copyright 2014-2017 OpenMarket Ltd
+Copyright 2017 Vector Creations Ltd
+Copyright 2017-2025 New Vector Ltd 
+
+This software is dual-licensed by New Vector Ltd (Element). It can be used either:
+  
+(1) for free under the terms of the GNU Affero General Public License (as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version); OR
+  
+(2) under the terms of a paid-for Element Commercial License agreement between you and Element (the terms of which may vary depending on what you and Element have agreed to).
+Unless required by applicable law or agreed to in writing, software distributed under the Licenses is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the Licenses for the specific language governing permissions and limitations under the Licenses.
+
+
+.. |support| image:: https://img.shields.io/badge/matrix-community%20support-success
+  :alt: (get community support in #synapse:matrix.org)
   :target: https://matrix.to/#/#synapse:matrix.org
 
 .. |development| image:: https://img.shields.io/matrix/synapse-dev:matrix.org?label=development&logo=matrix

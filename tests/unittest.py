@@ -28,6 +28,7 @@ import logging
 import secrets
 import time
 from typing import (
+    AbstractSet,
     Any,
     Awaitable,
     Callable,
@@ -39,6 +40,7 @@ from typing import (
     Mapping,
     NoReturn,
     Optional,
+    Protocol,
     Tuple,
     Type,
     TypeVar,
@@ -49,7 +51,7 @@ from unittest.mock import Mock, patch
 import canonicaljson
 import signedjson.key
 import unpaddedbase64
-from typing_extensions import Concatenate, ParamSpec, Protocol
+from typing_extensions import Concatenate, ParamSpec
 
 from twisted.internet.defer import Deferred, ensureDeferred
 from twisted.python.failure import Failure
@@ -269,6 +271,56 @@ class TestCase(unittest.TestCase):
                 required[key], actual[key], msg="%s mismatch. %s" % (key, actual)
             )
 
+    def assertIncludes(
+        self,
+        actual_items: AbstractSet[TV],
+        expected_items: AbstractSet[TV],
+        exact: bool = False,
+        message: Optional[str] = None,
+    ) -> None:
+        """
+        Assert that all of the `expected_items` are included in the `actual_items`.
+
+        This assert could also be called `assertContains`, `assertItemsInSet`
+
+        Args:
+            actual_items: The container
+            expected_items: The items to check for in the container
+            exact: Whether the actual state should be exactly equal to the expected
+                state (no extras).
+            message: Optional message to include in the failure message.
+        """
+        # Check that each set has the same items
+        if exact and actual_items == expected_items:
+            return
+        # Check for a superset
+        elif not exact and actual_items >= expected_items:
+            return
+
+        expected_lines: List[str] = []
+        for expected_item in expected_items:
+            is_expected_in_actual = expected_item in actual_items
+            expected_lines.append(
+                "{}  {}".format(" " if is_expected_in_actual else "?", expected_item)
+            )
+
+        actual_lines: List[str] = []
+        for actual_item in actual_items:
+            is_actual_in_expected = actual_item in expected_items
+            actual_lines.append(
+                "{}  {}".format("+" if is_actual_in_expected else " ", actual_item)
+            )
+
+        newline = "\n"
+        expected_string = f"Expected items to be in actual ('?' = missing expected items):\n {{\n{newline.join(expected_lines)}\n }}"
+        actual_string = f"Actual ('+' = found expected items):\n {{\n{newline.join(actual_lines)}\n }}"
+        first_message = (
+            "Items must match exactly" if exact else "Some expected items are missing."
+        )
+        diff_message = f"{first_message}\n{expected_string}\n{actual_string}"
+
+        self.fail(f"{diff_message}\n{message}")
+
 
 def DEBUG(target: TV) -> TV:
     """A decorator to set the .loglevel attribute to logging.DEBUG.
@@ -344,6 +396,8 @@ class HomeserverTestCase(TestCase):
         self._hs_args = {"clock": self.clock, "reactor": self.reactor}
         self.hs = self.make_homeserver(self.reactor, self.clock)
 
+        self.hs.get_datastores().main.tests_allow_no_chain_cover_index = False
+
         # Honour the `use_frozen_dicts` config option. We have to do this
         # manually because this is taken care of in the app `start` code, which
         # we don't run. Plus we want to reset it on tearDown.
@@ -404,7 +458,9 @@ class HomeserverTestCase(TestCase):
                 # Type ignore: mypy doesn't like us assigning to methods.
                 self.hs.get_auth().get_user_by_req = get_requester  # type: ignore[method-assign]
                 self.hs.get_auth().get_user_by_access_token = get_requester  # type: ignore[method-assign]
-                self.hs.get_auth().get_access_token_from_request = Mock(return_value=token)  # type: ignore[method-assign]
+                self.hs.get_auth().get_access_token_from_request = Mock(  # type: ignore[method-assign]
+                    return_value=token
+                )
 
         if self.needs_threadpool:
             self.reactor.threadpool = ThreadPool()  # type: ignore[assignment]
@@ -726,7 +782,7 @@ class HomeserverTestCase(TestCase):
         self,
         username: str,
         appservice_token: str,
-    ) -> Tuple[str, str]:
+    ) -> Tuple[str, Optional[str]]:
         """Register an appservice user as an application service.
         Requires the client-facing registration API be registered.
 
@@ -750,7 +806,7 @@ class HomeserverTestCase(TestCase):
             access_token=appservice_token,
         )
         self.assertEqual(channel.code, 200, channel.json_body)
-        return channel.json_body["user_id"], channel.json_body["device_id"]
+        return channel.json_body["user_id"], channel.json_body.get("device_id")
 
     def login(
         self,

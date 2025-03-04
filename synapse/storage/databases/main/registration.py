@@ -1250,9 +1250,7 @@ class RegistrationWorkerStore(CacheInvalidationWorkerStore):
                 SELECT address, session_id, medium, client_secret,
                 last_send_attempt, validated_at
                 FROM threepid_validation_session WHERE %s
-                """ % (
-                " AND ".join("%s = ?" % k for k in keyvalues.keys()),
-            )
+                """ % (" AND ".join("%s = ?" % k for k in keyvalues.keys()),)
 
             if validated is not None:
                 sql += " AND validated_at IS " + ("NOT NULL" if validated else "NULL")
@@ -1512,15 +1510,14 @@ class RegistrationWorkerStore(CacheInvalidationWorkerStore):
             # Override type because the return type is only optional if
             # allow_none is True, and we don't want mypy throwing errors
             # about None not being indexable.
-            pending, completed = cast(
-                Tuple[int, int],
-                self.db_pool.simple_select_one_txn(
-                    txn,
-                    "registration_tokens",
-                    keyvalues={"token": token},
-                    retcols=["pending", "completed"],
-                ),
+            row = self.db_pool.simple_select_one_txn(
+                txn,
+                "registration_tokens",
+                keyvalues={"token": token},
+                retcols=("pending", "completed"),
             )
+            pending = int(row[0])
+            completed = int(row[1])
 
             # Decrement pending and increment completed
             self.db_pool.simple_update_one_txn(

@@ -23,6 +23,7 @@ from http import HTTPStatus
 from typing import TYPE_CHECKING, List, Optional, Tuple, cast
 
 import attr
+from immutabledict import immutabledict
 
 from synapse.api.constants import Direction, EventTypes, JoinRules, Membership
 from synapse.api.errors import AuthError, Codes, NotFoundError, SynapseError
@@ -35,6 +36,7 @@ from synapse.http.servlet import (
     ResolveRoomIdMixin,
     RestServlet,
     assert_params_in_dict,
+    parse_boolean,
     parse_enum,
     parse_integer,
     parse_json,
@@ -242,13 +244,23 @@ class ListRoomRestServlet(RestServlet):
                 errcode=Codes.INVALID_PARAM,
             )
 
+        public_rooms = parse_boolean(request, "public_rooms")
+        empty_rooms = parse_boolean(request, "empty_rooms")
+
         direction = parse_enum(request, "dir", Direction, default=Direction.FORWARDS)
         reverse_order = True if direction == Direction.BACKWARDS else False
 
         # Return list of rooms according to parameters
         rooms, total_rooms = await self.store.get_rooms_paginate(
-            start, limit, order_by, reverse_order, search_term
+            start,
+            limit,
+            order_by,
+            reverse_order,
+            search_term,
+            public_rooms,
+            empty_rooms,
         )
+
         response = {
             # next_token should be opaque, so return a value the client can parse
             "offset": start,
@@ -452,7 +464,18 @@ class RoomStateRestServlet(RestServlet):
         if not room:
             raise NotFoundError("Room not found")
 
-        event_ids = await self._storage_controllers.state.get_current_state_ids(room_id)
+        state_filter = None
+        type = parse_string(request, "type")
+
+        if type:
+            state_filter = StateFilter(
+                types=immutabledict({type: None}),
+                include_others=False,
+            )
+
+        event_ids = await self._storage_controllers.state.get_current_state_ids(
+            room_id, state_filter
+        )
         events = await self.store.get_events(event_ids.values())
         now = self.clock.time_msec()
         room_state = await self._event_serializer.serialize_events(events.values(), now)

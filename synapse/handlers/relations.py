@@ -95,7 +95,6 @@ class RelationsHandler:
         self._event_handler = hs.get_event_handler()
         self._event_serializer = hs.get_event_client_serializer()
         self._event_creation_handler = hs.get_event_creation_handler()
-        self._config = hs.config
 
     async def get_relations(
         self,
@@ -164,7 +163,6 @@ class RelationsHandler:
             user_id,
             events,
             is_peeking=(member_event_id is None),
-            msc4115_membership_on_events=self._config.experimental.msc4115_membership_on_events,
         )
 
         # The relations returned for the requested event do include their
@@ -190,13 +188,13 @@ class RelationsHandler:
         if include_original_event:
             # Do not bundle aggregations when retrieving the original event because
             # we want the content before relations are applied to it.
-            return_value["original_event"] = (
-                await self._event_serializer.serialize_event(
-                    event,
-                    now,
-                    bundle_aggregations=None,
-                    config=serialize_options,
-                )
+            return_value[
+                "original_event"
+            ] = await self._event_serializer.serialize_event(
+                event,
+                now,
+                bundle_aggregations=None,
+                config=serialize_options,
             )
 
         if next_token:
@@ -610,7 +608,6 @@ class RelationsHandler:
             user_id,
             events,
             is_peeking=(member_event_id is None),
-            msc4115_membership_on_events=self._config.experimental.msc4115_membership_on_events,
         )
 
         aggregations = await self.get_bundled_aggregations(
