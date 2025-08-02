@@ -1873,6 +1873,41 @@ database migrations are complete. You should wait until background updates from
 each upgrade are complete before moving on to the next upgrade, to avoid
 stacking them up. You can monitor the currently running background updates with
 <a href="usage/administration/admin_api/background_updates.html#status">the Admin API</a>.</p>
+<h1 id="upgrading-to-v11360"><a class="header" href="#upgrading-to-v11360">Upgrading to v1.136.0</a></h1>
+<h2 id="deprecate-run_as_background_process-exported-as-part-of-the-module-api-interface-in-favor-of-moduleapirun_as_background_process"><a class="header" href="#deprecate-run_as_background_process-exported-as-part-of-the-module-api-interface-in-favor-of-moduleapirun_as_background_process">Deprecate <code>run_as_background_process</code> exported as part of the module API interface in favor of <code>ModuleApi.run_as_background_process</code></a></h2>
+<p>The <code>run_as_background_process</code> function is now a method of the <code>ModuleApi</code> class. If
+you were using the function directly from the module API, it will continue to work fine
+but the background process metrics will not include an accurate <code>server_name</code> label.
+This kind of metric labeling isn't relevant for many use cases and is used to
+differentiate Synapse instances running in the same Python process (relevant to Synapse
+Pro: Small Hosts). We recommend updating your usage to use the new
+<code>ModuleApi.run_as_background_process</code> method to stay on top of future changes.</p>
+<details>
+<summary>Example <code>run_as_background_process</code> upgrade</summary>
+<p>Before:</p>
+<pre><code class="language-python">class MyModule:
+    def __init__(self, module_api: ModuleApi) -&gt; None:
+        run_as_background_process(__name__ + &quot;:setup_database&quot;, self.setup_database)
+</code></pre>
+<p>After:</p>
+<pre><code class="language-python">class MyModule:
+    def __init__(self, module_api: ModuleApi) -&gt; None:
+        module_api.run_as_background_process(__name__ + &quot;:setup_database&quot;, self.setup_database)
+</code></pre>
+</details>
+<h2 id="metric-labels-have-changed-on-synapse_federation_last_received_pdu_time-and-synapse_federation_last_sent_pdu_time"><a class="header" href="#metric-labels-have-changed-on-synapse_federation_last_received_pdu_time-and-synapse_federation_last_sent_pdu_time">Metric labels have changed on <code>synapse_federation_last_received_pdu_time</code> and <code>synapse_federation_last_sent_pdu_time</code></a></h2>
+<p>Previously, the <code>synapse_federation_last_received_pdu_time</code> and
+<code>synapse_federation_last_sent_pdu_time</code> metrics both used the <code>server_name</code> label to
+differentiate between different servers that we send and receive events from.</p>
+<p>Since we're now using the <code>server_name</code> label to differentiate between different Synapse
+homeserver instances running in the same process, these metrics have been changed as follows:</p>
+<ul>
+<li><code>synapse_federation_last_received_pdu_time</code> now uses the <code>origin_server_name</code> label</li>
+<li><code>synapse_federation_last_sent_pdu_time</code> now uses the <code>destination_server_name</code> label</li>
+</ul>
+<p>The Grafana dashboard JSON in <code>contrib/grafana/synapse.json</code> has been updated to reflect
+this change but you will need to manually update your own existing Grafana dashboards
+using these metrics.</p>
 <h1 id="upgrading-to-v11350"><a class="header" href="#upgrading-to-v11350">Upgrading to v1.135.0</a></h1>
 <h2 id="on_user_registration-module-api-callback-may-now-run-on-any-worker"><a class="header" href="#on_user_registration-module-api-callback-may-now-run-on-any-worker"><code>on_user_registration</code> module API callback may now run on any worker</a></h2>
 <p>Previously, the <code>on_user_registration</code> callback would only run on the main
@@ -11862,6 +11897,7 @@ information.</p>
 ^/_matrix/client/unstable/im.nheko.summary/summary/.*$
 ^/_matrix/client/(r0|v3|unstable)/account/3pid$
 ^/_matrix/client/(r0|v3|unstable)/account/whoami$
+^/_matrix/client/(r0|v3|unstable)/account/deactivate$
 ^/_matrix/client/(r0|v3)/delete_devices$
 ^/_matrix/client/(api/v1|r0|v3|unstable)/devices(/|$)
 ^/_matrix/client/versions$
@@ -16269,7 +16305,38 @@ account data on the admin's user account. </p>
 <p>To receive soft failed events in APIs like <code>/sync</code> and <code>/messages</code>, set <code>return_soft_failed_events</code>
 to <code>true</code> in the admin client config. When <code>false</code>, the normal behaviour of these endpoints is to
 exclude soft failed events.</p>
+<p><strong>Note</strong>: If the policy server flagged the event as spam and that caused soft failure, that will be indicated
+in the event's <code>unsigned</code> content like so:</p>
+<pre><code class="language-json">{
+  &quot;type&quot;: &quot;m.room.message&quot;,
+  &quot;other&quot;: &quot;event_fields_go_here&quot;,
+  &quot;unsigned&quot;: {
+    &quot;io.element.synapse.soft_failed&quot;: true,
+    &quot;io.element.synapse.policy_server_spammy&quot;: true
+  }
+}
+</code></pre>
 <p>Default: <code>false</code></p>
+<h2 id="see-events-marked-spammy-by-policy-servers"><a class="header" href="#see-events-marked-spammy-by-policy-servers">See events marked spammy by policy servers</a></h2>
+<p>Learn more about policy servers from <a href="https://github.com/matrix-org/matrix-spec-proposals/pull/4284">MSC4284</a>.</p>
+<p>Similar to <code>return_soft_failed_events</code>, clients logged in with admin accounts can see events which were
+flagged by the policy server as spammy (and thus soft failed) by setting <code>return_policy_server_spammy_events</code>
+to <code>true</code>.</p>
+<p><code>return_policy_server_spammy_events</code> may be <code>true</code> while <code>return_soft_failed_events</code> is <code>false</code> to only see
+policy server-flagged events. When <code>return_soft_failed_events</code> is <code>true</code> however, <code>return_policy_server_spammy_events</code>
+is always <code>true</code>.</p>
+<p>Events which were flagged by the policy will be flagged as <code>io.element.synapse.policy_server_spammy</code> in the
+event's <code>unsigned</code> content, like so:</p>
+<pre><code class="language-json">{
+  &quot;type&quot;: &quot;m.room.message&quot;,
+  &quot;other&quot;: &quot;event_fields_go_here&quot;,
+  &quot;unsigned&quot;: {
+    &quot;io.element.synapse.soft_failed&quot;: true,
+    &quot;io.element.synapse.policy_server_spammy&quot;: true
+  }
+}
+</code></pre>
+<p>Default: <code>true</code> if <code>return_soft_failed_events</code> is <code>true</code>, otherwise <code>false</code></p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="using-the-synapse-manhole"><a class="header" href="#using-the-synapse-manhole">Using the synapse manhole</a></h1>
 <p>The &quot;manhole&quot; allows server administrators to access a Python shell on a running
 Synapse installation. This is a very powerful mechanism for administration and
