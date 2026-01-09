@@ -5848,6 +5848,24 @@ Setting this to a high value allows users to report content quickly, possibly in
   burst_count: 5.0
 </code></pre>
 <hr />
+<h3 id="rc_user_directory"><a class="header" href="#rc_user_directory"><code>rc_user_directory</code></a></h3>
+<p><em>(object)</em> This option allows admins to ratelimit searches in the user directory.</p>
+<p><em>Added in Synapse 1.145.0.</em></p>
+<p>This setting has the following sub-options:</p>
+<ul>
+<li>
+<p><code>per_second</code> (number): Maximum number of requests a client can send per second.</p>
+</li>
+<li>
+<p><code>burst_count</code> (number): Maximum number of requests a client can send before being throttled.</p>
+</li>
+</ul>
+<p>Default configuration:</p>
+<pre><code class="language-yaml">rc_user_directory:
+  per_second: 0.016
+  burst_count: 200.0
+</code></pre>
+<hr />
 <h3 id="federation_rr_transactions_per_room_per_second"><a class="header" href="#federation_rr_transactions_per_room_per_second"><code>federation_rr_transactions_per_room_per_second</code></a></h3>
 <p><em>(integer)</em> Sets outgoing federation transaction frequency for sending read-receipts, per-room.</p>
 <p>If we end up trying to send out more read-receipts, they will get buffered up into fewer transactions.</p>
@@ -5887,6 +5905,13 @@ Setting this to a high value allows users to report content quickly, possibly in
 <p><em>(boolean)</em> Enable the media store service in the Synapse master. Set to false if you are using a separate media store worker. Defaults to <code>true</code>.</p>
 <p>Example configuration:</p>
 <pre><code class="language-yaml">enable_media_repo: false
+</code></pre>
+<hr />
+<h3 id="enable_local_media_storage"><a class="header" href="#enable_local_media_storage"><code>enable_local_media_storage</code></a></h3>
+<p><em>(boolean)</em> Enable the local on-disk media storage provider. When disabled, media is stored only in configured <code>media_storage_providers</code> and temporary files are used for processing.
+<strong>Warning:</strong> If this option is set to <code>false</code> and no <code>media_storage_providers</code> are configured, all media requests will return 404 errors as there will be no storage backend available. Defaults to <code>true</code>.</p>
+<p>Example configuration:</p>
+<pre><code class="language-yaml">enable_local_media_storage: false
 </code></pre>
 <hr />
 <h3 id="media_store_path"><a class="header" href="#media_store_path"><code>media_store_path</code></a></h3>
@@ -13369,24 +13394,6 @@ information is requested for remote media which is not cached the endpoint will 
     &quot;safe_from_quarantine&quot;: null,
     &quot;sha256&quot;: &quot;ebf4f635a17d10d6eb46ba680b70142419aa3220f228001a036d311a22ee9d2a&quot;
   }
-}
-</code></pre>
-<h2 id="listing-all-quarantined-media"><a class="header" href="#listing-all-quarantined-media">Listing all quarantined media</a></h2>
-<p>This API returns a list of all quarantined media on the server. It is paginated, and can be scoped to either local or
-remote media. Note that the pagination values are also scoped to the request parameters - changing them but keeping the
-same pagination values will result in unexpected results.</p>
-<p>Request:</p>
-<pre><code class="language-http">GET /_synapse/admin/v1/media/quarantined?from=0&amp;limit=100&amp;kind=local
-</code></pre>
-<p><code>from</code> and <code>limit</code> are optional parameters, and default to <code>0</code> and <code>100</code> respectively. They are the row index and number
-of rows to return - they are not timestamps.</p>
-<p><code>kind</code> <em>MUST</em> either be <code>local</code> or <code>remote</code>.</p>
-<p>The API returns a JSON body containing MXC URIs for the quarantined media, like the following:</p>
-<pre><code class="language-json">{
-  &quot;media&quot;: [
-    &quot;mxc://localhost/xwvutsrqponmlkjihgfedcba&quot;,
-    &quot;mxc://localhost/abcdefghijklmnopqrstuvwx&quot;
-  ]
 }
 </code></pre>
 <h1 id="quarantine-media"><a class="header" href="#quarantine-media">Quarantine media</a></h1>
