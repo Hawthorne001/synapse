@@ -38,7 +38,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-f99fb7a3.js";
+            window.path_to_searchindex_js = "searchindex-d5bb8211.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-64310643.js"></script>
@@ -8253,6 +8253,7 @@ It’s recommended to leave this option as it is. We expect to remove this optio
 <p><em>Changed in Synapse 1.84.0: Added use_tls, certificate_file, private_key_file, ca_file and ca_path attributes</em></p>
 <p><em>Changed in Synapse 1.85.0: Added path option to use a local Unix socket</em></p>
 <p><em>Changed in Synapse 1.116.0: Added password_path</em></p>
+<p><em>Changed in Synapse 1.162.0: Added username</em></p>
 <p>This setting has the following sub-options:</p>
 <ul>
 <li>
@@ -8266,6 +8267,9 @@ It’s recommended to leave this option as it is. We expect to remove this optio
 </li>
 <li>
 <p><code>path</code> (string): The full path to a local Unix socket file. <strong>If this is used, <code>host</code> and <code>port</code> are ignored.</strong> Defaults to <code>"/tmp/redis.sock"</code>.</p>
+</li>
+<li>
+<p><code>username</code> (string|null): Optional username if configured on the Redis instance (Redis 6+ ACL authentication). Requires <code>password</code> (or <code>password_path</code>) to also be set. Defaults to <code>null</code>.</p>
 </li>
 <li>
 <p><code>password</code> (string|null): Optional password if configured on the Redis instance. Defaults to <code>null</code>.</p>
@@ -8297,6 +8301,7 @@ It’s recommended to leave this option as it is. We expect to remove this optio
   enabled: true
   host: localhost
   port: 6379
+  username: &lt;username&gt;
   password_path: &lt;path_to_the_password_file&gt;
   dbid: &lt;dbid&gt;
 </code></pre>
@@ -9108,18 +9113,15 @@ has more information on setting up SiWA.</p>
 <h3 id="auth0"><a class="header" href="#auth0">Auth0</a></h3>
 <p><a href="https://auth0.com/">Auth0</a> is a hosted SaaS IdP solution.</p>
 <ol>
-<li>
-<p>Create a regular web application for Synapse</p>
-</li>
-<li>
-<p>Set the Allowed Callback URLs to <code>[synapse public baseurl]/_synapse/client/oidc/callback</code></p>
-</li>
-<li>
-<p>Add a rule with any name to add the <code>preferred_username</code> claim.
-(See https://auth0.com/docs/customize/rules/create-rules for more information on how to create rules.)</p>
-<details>
- <summary>Code sample</summary>
-<pre><code class="language-js">function addPersistenceAttribute(user, context, callback) {
+<li>Create a regular web application for Synapse</li>
+<li>Set the Allowed Callback URLs to <code>[synapse public baseurl]/_synapse/client/oidc/callback</code></li>
+<li>Add a rule with any name to add the <code>preferred_username</code> claim.
+(See https://auth0.com/docs/customize/rules/create-rules for more information on how to create rules.)</li>
+</ol>
+  <details>
+    <summary>Code sample</summary>
+<pre><code>```js
+function addPersistenceAttribute(user, context, callback) {
   user.user_metadata = user.user_metadata || {};
   user.user_metadata.preferred_username = user.user_metadata.preferred_username || user.user_id;
   context.idToken.preferred_username = user.user_metadata.preferred_username;
@@ -9132,10 +9134,9 @@ has more information on setting up SiWA.</p>
         callback(err);
     });
 }
+```
 </code></pre>
-</details></li>
-</ol>
-  
+  </details>
 <p>Synapse config:</p>
 <pre><code class="language-yaml">oidc_providers:
   - idp_id: auth0
@@ -12679,6 +12680,9 @@ information.</p>
 
 # Unstable MSC4140 support
 ^/_matrix/client/unstable/org.matrix.msc4140/delayed_events(/.*/restart)?$
+
+# Stabilised Delegated Authentication support (`matrix_authentication_service.enabled: true`)
+^/_synapse/mas/
 </code></pre>
 <p>Additionally, the following REST endpoints can be handled for GET requests:</p>
 <pre><code># Push rules requests
@@ -12693,6 +12697,9 @@ information.</p>
 
 # Admin API requests
 ^/_synapse/admin/v2/users/[^/]+$
+
+# Unstable MSC4140 support
+^/_matrix/client/unstable/org.matrix.msc4140/delayed_events/[^/]+$
 </code></pre>
 <p>Pagination requests can also be handled, but all requests for a given
 room must be routed to the same instance. Additionally, care must be taken to
@@ -12702,7 +12709,7 @@ for the room are in flight:</p>
 </code></pre>
 <p>Additionally, the following endpoints should be included if Synapse is configured
 to use SSO (you only need to include the ones for whichever SSO provider you’re
-using):</p>
+using) and delegated authentication isn’t enabled:</p>
 <pre><code># for all SSO providers
 ^/_matrix/client/(api/v1|r0|v3|unstable)/login/sso/redirect
 ^/_synapse/client/pick_idp$
@@ -19855,6 +19862,9 @@ await wait_for_room("!aAAaaAaaaAAAaAaAA:matrix.org")
 await wait_for_room("!aAAaaAaaaAAAaAaAA:matrix.org")
 </code></pre>
 </td>
+</tr>
+
+</table>
 
 <h3 id="uncancelled-processing"><a class="header" href="#uncancelled-processing">Uncancelled processing</a></h3>
 <p>Some <code>async</code> functions may kick off some <code>async</code> processing which is
@@ -19956,8 +19966,6 @@ with LoggingContext("request-1"):
 
 </table>
 
-</tr>
-</table>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="log-contexts"><a class="header" href="#log-contexts">Log Contexts</a></h1>
 <p>To help track the processing of individual requests, synapse uses a
